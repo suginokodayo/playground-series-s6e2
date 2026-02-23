@@ -24,12 +24,28 @@ print(f"[1/6] Data loaded | Train: {train.shape} | Test: {test.shape}")
 # mean/count 系の特徴量を train/test に付与する
 STAT_FEATS = []
 global_mean = train[TARGET].mean()
+N_SPLITS = 5
+fold_ids = np.arange(len(train)) % N_SPLITS
+rng = np.random.default_rng(42)
+rng.shuffle(fold_ids)
 
 for col in BASE:
+    # train 側は Out-of-Fold で target mean を作成してリークを防ぐ
+    oof_mean = pd.Series(global_mean, index=train.index, dtype=np.float64)
+    for fold in range(N_SPLITS):
+        valid_mask = fold_ids == fold
+        train_mask = ~valid_mask
+
+        fold_mean_map = train.loc[train_mask].groupby(col)[TARGET].mean()
+        oof_mean.loc[valid_mask] = (
+            train.loc[valid_mask, col].map(fold_mean_map).fillna(global_mean)
+        )
+
+    # test/inference 側には full train で作った map を使う
     mean_map = train.groupby(col)[TARGET].mean()
     count_map = train[col].value_counts().to_dict()
 
-    train[f'train_mean_{col}'] = train[col].map(mean_map).fillna(global_mean)
+    train[f'train_mean_{col}'] = oof_mean
     test[f'train_mean_{col}'] = test[col].map(mean_map).fillna(global_mean)
     train[f'train_count_{col}'] = train[col].map(count_map).fillna(0)
     test[f'train_count_{col}'] = test[col].map(count_map).fillna(0)
